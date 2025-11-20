@@ -823,6 +823,7 @@ name = "voice"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "mcp" },
     { name = "numpy" },
     { name = "openai-agents" },
     { name = "sounddevice" },
@@ -831,6 +832,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "mcp", specifier = ">=1.21.1" },
     { name = "numpy", specifier = ">=2.3.5" },
     { name = "openai-agents", specifier = ">=0.5.1" },
     { name = "sounddevice", specifier = ">=0.5.3" },

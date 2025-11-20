@@ -1,53 +1,20 @@
-# main.py
+# openai-agent-sdk/main.py
 import asyncio
 import numpy as np
 import sounddevice as sd
 from dotenv import load_dotenv
 from agents.realtime import RealtimeAgent, RealtimeRunner
-from agents import function_tool
+from agents import set_tracing_export_api_key
 from collections import deque
 import threading
+from agents.mcp import MCPServerStreamableHttp, MCPServerStreamableHttpParams
 
 load_dotenv()
 
-# Mock User Data
-MOCK_USER_DATA = {
-    "user_1": {"name": "Ali", "email": "ali@example.com", "plan": "Premium"},
-    "user_2": {"name": "Taha", "email": "taha@example.com", "plan": "Standard"},
-    "user_3": {"name": "Fatima", "email": "fatima@example.com", "plan": "Premium"},
-}
-
-@function_tool
-def fetch_claim_status(phone_number: str) -> str:
-    """
-    Fetches claim or insurance status from the API using the user's phone number.
-    Always ask for the phone number first before calling this tool.
-    """
-    print(f"\n🔎 LOOKUP: Searching for phone number: {phone_number}...")
-    
-    # --- REAL API LOGIC HERE ---
-    # Filhal me ek dummy logic likh raha hun, aap yahan Stedi ka code dalenge
-    
-    try:
-        # Example: Agar ye real Stedi API hoti
-        # url = "https://healthcare.us.stedi.com/v1/claims/status"
-        # headers = {"Authorization": "Key YOUR_API_KEY"}
-        # response = requests.get(url, params={"phone": phone_number}, headers=headers)
-        # data = response.json()
-        
-        # SIMULATION (Testing ke liye):
-        # Hum check karte hain agar number '1234' he to data mile, warna nahi
-        if "1234" in phone_number:
-            return (
-                "Data Found: Patient Name: Taha. "
-                "Status: Claim Approved. "
-                "Amount Paid: $500 on November 15th."
-            )
-        else:
-            return "No record found for this phone number."
-            
-    except Exception as e:
-        return f"API Error: {str(e)}"
+# Get API key from environment variable
+import os
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+set_tracing_export_api_key(OPENAI_API_KEY)
 
 # Audio configuration
 SAMPLE_RATE = 24000
@@ -114,109 +81,116 @@ def audio_output_callback(outdata, frames, time, status):
         outdata.fill(0)
 
 async def main():
-    print("🎤 Initializing Voice Agent...")
+    print("🎤 Initializing Voice Agent with MCP...")
+    print("🔌 Connecting to MCP Server at http://127.0.0.1:9000/mcp")
     
-    agent = RealtimeAgent(
-        name="HealthcareAgent",
-        instructions=(
-            "You are a helpful medical receptionist assistant. "
-            "Your goal is to check claim status for clients. "
-            "1. First, greet the user and ask for their registered Phone Number. "
-            "2. Once you get the number, use the 'fetch_claim_status' tool immediately. "
-            "3. Tell the user the details returned by the tool in a conversational way."
-            "Speak clearly and politely."
-        ),
-        tools=[fetch_claim_status], # Naya tool function yahan pass karen
-    )
-
-    runner = RealtimeRunner(
-        starting_agent=agent,
-        config={
-            "model_settings": {
-                "model_name": "gpt-realtime-mini",
-                "voice": "alloy",
-                "modalities": ["audio"],
-                "input_audio_format": "pcm16",
-                "output_audio_format": "pcm16",
-                "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
-                "turn_detection": {"type": "semantic_vad", "interrupt_response": True},
-            }
-        },
-    )
-
-    session = await runner.run()
-
-    # Start audio streams
-    input_stream = sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype=np.float32,
-        callback=audio_input_callback,
-        blocksize=INPUT_CHUNK_SIZE
-    )
+    # MCP Server connection setup
+    connection = MCPServerStreamableHttpParams(url="http://127.0.0.1:9000/mcp")
     
-    output_stream = sd.OutputStream(
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype=np.float32,
-        callback=audio_output_callback,
-        blocksize=OUTPUT_CHUNK_SIZE
-    )
-
-    with input_stream, output_stream:
-        print("\n✅ Voice Agent Ready!")
-        print("🎤 Speak into your microphone")
-        print("💬 Try saying: 'Hi, check claim status for number 12345'")
-        print("🛑 Press Ctrl+C to stop\n")
+    async with MCPServerStreamableHttp(params=connection) as server:
+        print("✅ MCP Server connected!")
         
-        async with session:
-            # Task to send audio from microphone to session
-            async def send_audio():
-                while True:
-                    try:
-                        if input_buffer:
-                            audio_data = input_buffer.popleft()
-                            await session.send_audio(audio_data)
-                        else:
-                            await asyncio.sleep(0.01)
-                    except Exception as e:
-                        print(f"Send error: {e}")
-                        break
+        agent = RealtimeAgent(
+            name="HealthcareAgent",
+            instructions=(
+                "You are a helpful medical receptionist assistant. "
+                "Your goal is to check claim status for clients. "
+                "1. First, greet the user and ask for their registered Phone Number. "
+                "2. Once you get the number, use the 'fetch_claim_status' tool immediately. "
+                "3. Tell the user the details returned by the tool in a conversational way. "
+                "Speak clearly and politely."
+            ),
+            mcp_servers=[server]  # MCP server pass karo
+        )
 
-            send_task = asyncio.create_task(send_audio())
+        runner = RealtimeRunner(
+            starting_agent=agent,
+            config={
+                "model_settings": {
+                    "model_name": "gpt-realtime-mini",
+                    "voice": "alloy",
+                    "modalities": ["audio"],
+                    "input_audio_format": "pcm16",
+                    "output_audio_format": "pcm16",
+                    "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
+                    "turn_detection": {"type": "semantic_vad", "interrupt_response": True},
+                }
+            },
+        )
 
-            try:
-                async for event in session:
-                    if event.type == "tool_start":
-                        print(f"\n🔧 Calling tool: {event.tool.name}")
-                    
-                    elif event.type == "tool_end":
-                        print(f"✅ Tool result: {event.output}\n")
+        session = await runner.run()
 
-                    elif event.type == "audio":
+        # Start audio streams
+        input_stream = sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=CHANNELS,
+            dtype=np.float32,
+            callback=audio_input_callback,
+            blocksize=INPUT_CHUNK_SIZE
+        )
+        
+        output_stream = sd.OutputStream(
+            samplerate=SAMPLE_RATE,
+            channels=CHANNELS,
+            dtype=np.float32,
+            callback=audio_output_callback,
+            blocksize=OUTPUT_CHUNK_SIZE
+        )
+
+        with input_stream, output_stream:
+            print("\n✅ Voice Agent Ready! (Connected to MCP)")
+            print("🎤 Speak into your microphone")
+            print("💬 Try saying: 'Hi, check claim status for number 12345'")
+            print("🛑 Press Ctrl+C to stop\n")
+            
+            async with session:
+                # Task to send audio from microphone to session
+                async def send_audio():
+                    while True:
                         try:
-                            if hasattr(event.audio, 'data'):
-                                audio_bytes = event.audio.data
+                            if input_buffer:
+                                audio_data = input_buffer.popleft()
+                                await session.send_audio(audio_data)
                             else:
-                                audio_bytes = event.audio
-                            
-                            if isinstance(audio_bytes, bytes) and len(audio_bytes) > 0:
-                                # Write to buffer immediately
-                                output_buffer.write(audio_bytes)
+                                await asyncio.sleep(0.01)
                         except Exception as e:
-                            print(f"Audio error: {e}")
+                            print(f"Send error: {e}")
+                            break
 
-                    elif event.type == "audio_end":
-                        print("✅ Agent finished speaking\n")
+                send_task = asyncio.create_task(send_audio())
 
-                    elif event.type == "error":
-                        print(f"\n❌ ERROR: {event.error}")
-                        break
+                try:
+                    async for event in session:
+                        if event.type == "tool_start":
+                            print(f"\n🔧 Calling MCP tool: {event.tool.name}")
+                        
+                        elif event.type == "tool_end":
+                            print(f"✅ MCP Tool result: {event.output}\n")
 
-            except Exception as e:
-                print(f"\n❌ Session error: {e}")
-            finally:
-                send_task.cancel()
+                        elif event.type == "audio":
+                            try:
+                                if hasattr(event.audio, 'data'):
+                                    audio_bytes = event.audio.data
+                                else:
+                                    audio_bytes = event.audio
+                                
+                                if isinstance(audio_bytes, bytes) and len(audio_bytes) > 0:
+                                    # Write to buffer immediately
+                                    output_buffer.write(audio_bytes)
+                            except Exception as e:
+                                print(f"Audio error: {e}")
+
+                        elif event.type == "audio_end":
+                            print("✅ Agent finished speaking\n")
+
+                        elif event.type == "error":
+                            print(f"\n❌ ERROR: {event.error}")
+                            break
+
+                except Exception as e:
+                    print(f"\n❌ Session error: {e}")
+                finally:
+                    send_task.cancel()
 
 if __name__ == "__main__":
     try:
