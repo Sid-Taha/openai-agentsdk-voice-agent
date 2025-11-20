@@ -1,3 +1,4 @@
+# main.py
 import asyncio
 import numpy as np
 import sounddevice as sd
@@ -17,14 +18,36 @@ MOCK_USER_DATA = {
 }
 
 @function_tool
-def get_user_info_by_id(user_id: str) -> str:
-    """Fetches user information from the database based on their user_id."""
-    print(f"\n🔧 TOOL CALLED: get_user_info_by_id(user_id='{user_id}')")
-    user = MOCK_USER_DATA.get(user_id)
-    if user:
-        return f"User found: Name={user['name']}, Email={user['email']}, Plan={user['plan']}"
-    else:
-        return f"User with ID '{user_id}' not found."
+def fetch_claim_status(phone_number: str) -> str:
+    """
+    Fetches claim or insurance status from the API using the user's phone number.
+    Always ask for the phone number first before calling this tool.
+    """
+    print(f"\n🔎 LOOKUP: Searching for phone number: {phone_number}...")
+    
+    # --- REAL API LOGIC HERE ---
+    # Filhal me ek dummy logic likh raha hun, aap yahan Stedi ka code dalenge
+    
+    try:
+        # Example: Agar ye real Stedi API hoti
+        # url = "https://healthcare.us.stedi.com/v1/claims/status"
+        # headers = {"Authorization": "Key YOUR_API_KEY"}
+        # response = requests.get(url, params={"phone": phone_number}, headers=headers)
+        # data = response.json()
+        
+        # SIMULATION (Testing ke liye):
+        # Hum check karte hain agar number '1234' he to data mile, warna nahi
+        if "1234" in phone_number:
+            return (
+                "Data Found: Patient Name: Taha. "
+                "Status: Claim Approved. "
+                "Amount Paid: $500 on November 15th."
+            )
+        else:
+            return "No record found for this phone number."
+            
+    except Exception as e:
+        return f"API Error: {str(e)}"
 
 # Audio configuration
 SAMPLE_RATE = 24000
@@ -94,15 +117,16 @@ async def main():
     print("🎤 Initializing Voice Agent...")
     
     agent = RealtimeAgent(
-        name="SupportAgent",
+        name="HealthcareAgent",
         instructions=(
-            "You are a helpful voice assistant. "
-            "When a user tells you their ID (like user_1, user_2, etc.), "
-            "use the get_user_info_by_id tool to fetch their information "
-            "and greet them by name with their details."
+            "You are a helpful medical receptionist assistant. "
+            "Your goal is to check claim status for clients. "
+            "1. First, greet the user and ask for their registered Phone Number. "
+            "2. Once you get the number, use the 'fetch_claim_status' tool immediately. "
+            "3. Tell the user the details returned by the tool in a conversational way."
+            "Speak clearly and politely."
         ),
-        tools=[get_user_info_by_id],
-        
+        tools=[fetch_claim_status], # Naya tool function yahan pass karen
     )
 
     runner = RealtimeRunner(
@@ -142,7 +166,7 @@ async def main():
     with input_stream, output_stream:
         print("\n✅ Voice Agent Ready!")
         print("🎤 Speak into your microphone")
-        print("💬 Try saying: 'Hello, I am Taha and my ID is user_2'")
+        print("💬 Try saying: 'Hi, check claim status for number 12345'")
         print("🛑 Press Ctrl+C to stop\n")
         
         async with session:
